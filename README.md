@@ -114,13 +114,5 @@ Una vez que el `import` funciona, los notebooks pueden ejecutarse de principio a
 
 ---
 
-## Nota sobre la entrega anterior y el módulo `motor_mpd_cpp`
-
-En la primera entrega **no se subió la carpeta `build/`**. Como `motor_mpd_cpp` es el módulo que se compila a partir del código de `src/cpp/`, sin esa compilación los notebooks —que son el punto de entrada del proyecto— no tenían nada que importar y no podían ejecutarse tal cual. De ahí la observación recibida: faltaba dejar explícito que primero hay que **obtener/compilar el módulo `motor_mpd_cpp`** para que el proyecto corra.
-
-Esto ya está corregido:
-
-1. La carpeta **`build/` ahora está incluida** en el repositorio, con la solución `SimuladorAF_MPD.sln` y los archivos de proyecto generados por CMake.
-2. La sección [Compilación](#compilación-del-módulo-motor_mpd_cpp) explica paso a paso cómo generar `motor_mpd_cpp` desde el código fuente, de modo que cualquiera pueda reconstruirlo aunque no use el `build/` incluido.
 
 **Nota técnica:** el módulo compilado (`.pyd` / `.so`) depende del sistema operativo y de la versión de Python con que se generó, así que el `build/` incluido sirve sobre todo como referencia (Windows x64). La vía fiable y portable para evaluar el proyecto es **compilar desde el código fuente** siguiendo los pasos de arriba.
