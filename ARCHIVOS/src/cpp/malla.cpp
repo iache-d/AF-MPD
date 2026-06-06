@@ -6,23 +6,36 @@
 #endif
 #include <cstdlib> // Para generar las posiciones aleatorias iniciales
 #include <algorithm>
+#include <vector>
+#include <random>
 
 namespace py = pybind11;
+
+
+struct IonArgon {
+    double x, y, z;
+    double vx, vy, vz;
+    int estado;
+    double energia_impacto;
+};
 
 
 class Malla2D {
 public:
     int Nr, Nz;
-    double r_catodo, r_anodo, L;
+    double r_catodo, r_anodo, L_catodo, L_anodo;
     bool es_campana;
 
-    Malla2D(int Nr_, int Nz_, double r_c, double r_a, double L_, bool campana)
-        : Nr(Nr_), Nz(Nz_), r_catodo(r_c), r_anodo(r_a), L(L_), es_campana(campana) {}
+
+    Malla2D(int Nr_, int Nz_, double r_c, double r_a, double L_c_, double L_a_, bool campana)
+        : Nr(Nr_), Nz(Nz_), r_catodo(r_c), r_anodo(r_a), L_catodo(L_c_), L_anodo(L_a_), es_campana(campana) {}
 
     py::array_t<double> obtener_Z() {
         auto resultado = py::array_t<double>({Nr, Nz});
         double* ptr = (double*) resultado.request().ptr;
-        double dz = L / (Nz - 1);
+        
+
+        double dz = L_anodo / (Nz - 1); 
         for (int i = 0; i < Nr; i++) {
             for (int j = 0; j < Nz; j++) {
                 ptr[i * Nz + j] = j * dz;
@@ -34,21 +47,23 @@ public:
     py::array_t<double> obtener_R() {
         auto resultado = py::array_t<double>({Nr, Nz});
         double* ptr = (double*) resultado.request().ptr;
-        double dz = L / (Nz - 1);
+        double dz = L_anodo / (Nz - 1);
         
         for (int j = 0; j < Nz; j++) {
             double z = j * dz;
             double r_out = r_anodo; 
             
             if (es_campana) {
-
                 double a = 4.0;
                 r_out = r_anodo * std::pow(1.0 + std::pow(z / a, 2), 0.75);
             }
 
-            double dr = (r_out - r_catodo) / (Nr - 1);
+
+            double r_in_actual = (z <= L_catodo) ? r_catodo : 0.0001;
+            
+            double dr = (r_out - r_in_actual) / (Nr - 1);
             for (int i = 0; i < Nr; i++) {
-                ptr[i * Nz + j] = r_catodo + i * dr;
+                ptr[i * Nz + j] = r_in_actual + i * dr;
             }
         }
         return resultado;
@@ -91,30 +106,40 @@ public:
         Bz = py::array_t<double>({Nr, Nz});
     }
 
-    void calcular_campo_aplicado(double B0, double L, double r_catodo, double r_anodo, bool es_campana) {
+
+    void calcular_campo_aplicado(double B0, double L_catodo, double L_anodo, double r_catodo, double r_anodo, bool es_campana) {
         double* ptr_Br = (double*) Br.request().ptr;
         double* ptr_Bz = (double*) Bz.request().ptr;
-        double dz = L / (Nz - 1);
+        double dz = L_anodo / (Nz - 1); 
 
         for(int j = 0; j < Nz; j++) {
             double z = j * dz;
             double a = 4.0; 
             
-            // Campo de Biot-Savart real
+            // Campo de Biot-Savart real en el eje
             double Bz_val = B0 / std::pow(1.0 + std::pow(z / a, 2), 1.5);
             
-            // Derivada real de Bz respecto a z
+            // Derivada real de Bz respecto a z (usada para la divergencia de Br)
             double dBz_dz = -3.0 * B0 * z / (a * a * std::pow(1.0 + std::pow(z / a, 2), 2.5));
 
             double r_out = r_anodo;
             if (es_campana) {
                 r_out = r_anodo * std::pow(1.0 + std::pow(z / a, 2), 0.75);
             }
-            double dr = (r_out - r_catodo) / (Nr - 1);
+            
+
+            // El radio interno debe coincidir EXACTAMENTE con el de Malla2D
+            double r_in_actual = (z <= L_catodo) ? r_catodo : 0.0001; 
+            
+            double dr = (r_out - r_in_actual) / (Nr - 1);
 
             for(int i = 0; i < Nr; i++) {
-                double r = r_catodo + i * dr;
+                double r = r_in_actual + i * dr;
+                
+                // Asignación de los tensores de campo magnético
                 ptr_Bz[i * Nz + j] = Bz_val;
+                
+                // Usando la aproximación paraxial: Br = -0.5 * r * (dBz/dz)
                 ptr_Br[i * Nz + j] = -0.5 * r * dBz_dz;
             }
         }
@@ -124,7 +149,6 @@ public:
 class FuerzaLorentz {
 public:
     int Nr, Nz;
-
     py::array_t<double> Jr, Jtheta, Fz, Fr;
 
     FuerzaLorentz(int Nr_, int Nz_) : Nr(Nr_), Nz(Nz_) {
@@ -134,14 +158,15 @@ public:
         Fr = py::array_t<double>({Nr, Nz});
     }
 
-    // Método que calcula F = J x B
-    void calcular_tensores(double I_arc, double param_hall, double L, 
+    // Actualizado: Ahora recibe L_catodo
+    void calcular_tensores(double I_arc, double param_hall, double L_catodo, 
                            py::array_t<double> R_matriz, 
+                           py::array_t<double> Z_matriz, // Necesitamos Z para saber dónde estamos
                            py::array_t<double> Br_matriz, 
                            py::array_t<double> Bz_matriz) {
         
-
         double* ptr_R  = (double*) R_matriz.request().ptr;
+        double* ptr_Z  = (double*) Z_matriz.request().ptr; // Puntero a Z
         double* ptr_Br = (double*) Br_matriz.request().ptr;
         double* ptr_Bz = (double*) Bz_matriz.request().ptr;
 
@@ -152,414 +177,221 @@ public:
 
         for(int i = 0; i < Nr * Nz; i++) {
             double r = ptr_R[i];
+            double z = ptr_Z[i];
             
+            double j_r = 0.0;
+            double j_t = 0.0;
 
-            double j_r = -I_arc / (2.0 * M_PI * r * L);
-            
 
-            double j_t = param_hall * j_r;
+            // Asumimos que la corriente radial macroscópica solo fluye sobre el cuerpo del cátodo
+            if (z <= L_catodo && r >= 0.01) { 
+
+                j_r = -I_arc / (2.0 * M_PI * r * L_catodo); 
+                j_t = param_hall * j_r;
+            } else {
+
+                // En un modelo real, las líneas se curvan hacia la punta aquí.
+                j_r = 0.0; 
+                j_t = 0.0;
+            }
 
             ptr_Jr[i] = j_r;
             ptr_Jt[i] = j_t;
 
-
             ptr_Fz[i] = -j_t * ptr_Br[i]; 
-            
-
             ptr_Fr[i] = j_t * ptr_Bz[i];  
         }
     }
 };
 
 
-//IGNORAR TODO ESTA CLASE, NO FUNCIONA POR MÁS QUE TRATÉ
-class RastreadorIones {
+
+
+
+class SimuladorPIC {
 public:
-    int N, Nr, Nz;
-    py::array_t<double> Rp, Zp, Vr, Vz, Vtheta;
-    py::array_t<double> Zp_anterior;
-    py::array_t<int> Estado;
+    std::vector<IonArgon> iones;
+    double Te_eV;
+    double masa_ion;
+    double carga_e;
+    
+    double r_catodo, r_anodo, L_catodo, L_anodo, dr_celda;
+    int Nr; 
 
-    RastreadorIones(int N_, int Nr_, int Nz_, double r_c, double r_a_max)
-        : N(N_), Nr(Nr_), Nz(Nz_) {
-
-        Rp = py::array_t<double>(N);
-        Zp = py::array_t<double>(N);
-        Zp_anterior = py::array_t<double>(N);
-        Vr = py::array_t<double>(N);
-        Vz = py::array_t<double>(N);
-        Vtheta = py::array_t<double>(N);
-        Estado = py::array_t<int>(N);
-
-        auto buf_R = Rp.mutable_unchecked();
-        auto buf_Z = Zp.mutable_unchecked();
-        auto buf_Z_ant = Zp_anterior.mutable_unchecked();
-        auto buf_Vr = Vr.mutable_unchecked();
-        auto buf_Vz = Vz.mutable_unchecked();
-        auto buf_Vth = Vtheta.mutable_unchecked();
-        auto buf_E = Estado.mutable_unchecked();
-
-        srand(42);
-
-
-
-        double L = 4.455;
+    SimuladorPIC(int num_particulas, double Te_eV_, double r_c, double r_a, double L_c, double L_a, int Nr_) 
+        : Te_eV(Te_eV_), r_catodo(r_c), r_anodo(r_a), L_catodo(L_c), L_anodo(L_a), Nr(Nr_) { 
         
-        double r_min = r_c + 0.1;
-        double r_max = r_c + 1.0; 
+        masa_ion = 6.63e-26; 
+        carga_e = 1.602e-19; 
+        dr_celda = (r_anodo - r_catodo) / (Nr - 1); 
+        iones.resize(num_particulas);
+    }
 
-        for (int k = 0; k < N; k++) {
-            double u = (double)rand() / RAND_MAX;
+    // Añadimos 'r_anodo_base_cm' como segundo parámetro
+    void inicializar_particulas(double u_z_inicial_m_s, double r_anodo_base_cm) {
+
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        
+
+
+        std::uniform_real_distribution<> dist_r(r_catodo + 0.02, r_anodo_base_cm - 0.05); 
+        
+        std::uniform_real_distribution<> dist_theta(0.0, 2.0 * M_PI);
+        std::uniform_real_distribution<> dist_z(-0.05, 0.0); 
+
+
+        for (auto& ion : iones) {
+            double r_inicial_cm = dist_r(gen);
+            double theta_inicial = dist_theta(gen);
+
+            ion.x = (r_inicial_cm / 100.0) * std::cos(theta_inicial);
+            ion.y = (r_inicial_cm / 100.0) * std::sin(theta_inicial);
+            ion.z = dist_z(gen); 
+
+            ion.vx = 0.0;
+            ion.vy = 0.0;
+            ion.vz = u_z_inicial_m_s; 
+            
+            ion.estado = 0;             
+            ion.energia_impacto = 0.0;  
+        }
+    }
+
+    py::array_t<double> obtener_posiciones_rz() {
+        auto resultado = py::array_t<double>({ (int)iones.size(), 2 });
+        double* ptr = (double*) resultado.request().ptr;
+        for (size_t i = 0; i < iones.size(); i++) {
+            double r_m = std::sqrt(iones[i].x * iones[i].x + iones[i].y * iones[i].y);
+            ptr[i * 2 + 0] = r_m;          
+            ptr[i * 2 + 1] = iones[i].z; 
+        }
+        return resultado;
+    }
+
+    py::array_t<int> obtener_estados() {
+        auto resultado = py::array_t<int>((int)iones.size());
+        int* ptr = (int*) resultado.request().ptr;
+        for (size_t i = 0; i < iones.size(); i++) {
+            ptr[i] = iones[i].estado;
+        }
+        return resultado;
+    }
+    
+
+    void avanzar_paso_temporal_boris(double dt, py::array_t<double> Ez_in, py::array_t<double> Er_in,
+                                 py::array_t<double> Bz_in, py::array_t<double> Br_in,
+                                 py::array_t<double> lim_pared, double L_sim, int Nz) {
+    
+    double* ptr_Ez = (double*) Ez_in.request().ptr;
+    double* ptr_Er = (double*) Er_in.request().ptr;
+    double* ptr_Bz = (double*) Bz_in.request().ptr;
+    double* ptr_Br = (double*) Br_in.request().ptr;
+    double* ptr_lim = (double*) lim_pared.request().ptr;
+
+    double q_m = carga_e / masa_ion;
+    double dr_m = (r_anodo / 100.0) / (Nr - 1);
+    double dz_m = (L_sim / 100.0) / (Nz - 1);
+    double rc_m = r_catodo / 100.0;
+    double L_cat_m = L_catodo / 100.0;
+
+    for (auto& ion : iones) {
+        if (ion.estado != 0) continue;
+
+        double r_m = std::sqrt(ion.x * ion.x + ion.y * ion.y) + 1e-9;
+        double z_m = ion.z;
+
+
+        // Guard: en el reservorio (z < 0) no hay campo definido.
+        // Sin este check, j se clampea a 0 y los iones leen el campo
+        // de Z=0 incorrectamente, matándolos antes de entrar al dominio.
+        double Ez = 0.0, Er = 0.0, Bz = 0.0, Br = 0.0;
+        if (z_m >= 0.0) {
+            int i = std::max(0, std::min(Nr - 1, (int)(r_m / dr_m)));
+            int j = std::max(0, std::min(Nz - 1, (int)(z_m / dz_m)));
+            int idx = i * Nz + j;
+            Ez = ptr_Ez[idx];
+            Er = ptr_Er[idx];
+            Bz = ptr_Bz[idx];
+            Br = ptr_Br[idx];
+        }
+
+        double Ex = Er * (ion.x / r_m);
+        double Ey = Er * (ion.y / r_m);
+
+
+        double q_prime = q_m * dt / 2.0;
+        
+        // Medio empuje eléctrico (v-)
+        double v_minus_x = ion.vx + q_prime * Ex;
+        double v_minus_y = ion.vy + q_prime * Ey;
+        double v_minus_z = ion.vz + q_prime * Ez;
+
+        // Rotación magnética (t)
+        double tx = q_prime * (Br * (ion.x / r_m)), ty = q_prime * (Br * (ion.y / r_m)), tz = q_prime * Bz;
+        double t_mag2 = tx*tx + ty*ty + tz*tz;
+        double sx = 2.0 * tx / (1.0 + t_mag2), sy = 2.0 * ty / (1.0 + t_mag2), sz = 2.0 * tz / (1.0 + t_mag2);
+
+        double v_prime_x = v_minus_x + (v_minus_y * tz - v_minus_z * ty);
+        double v_prime_y = v_minus_y + (v_minus_z * tx - v_minus_x * tz);
+        double v_prime_z = v_minus_z + (v_minus_x * ty - v_minus_y * tx);
+
+        double v_plus_x = v_minus_x + (v_prime_y * sz - v_prime_z * sy);
+        double v_plus_y = v_minus_y + (v_prime_z * sx - v_prime_x * sz);
+        double v_plus_z = v_minus_z + (v_prime_x * sy - v_prime_y * sx);
+
+        // Segundo medio empuje eléctrico
+        ion.vx = v_plus_x + q_prime * Ex;
+        ion.vy = v_plus_y + q_prime * Ey;
+        ion.vz = v_plus_z + q_prime * Ez;
+
+        ion.x += ion.vx * dt;
+        ion.y += ion.vy * dt;
+        ion.z += ion.vz * dt;
+
+        double r_new = std::sqrt(ion.x*ion.x + ion.y*ion.y);
+        double z_new = ion.z;
+        int j_col = std::max(0, std::min(Nz - 1, (int)(z_new / dz_m))); 
+        double lim_anodo = ptr_lim[j_col] / 100.0;                      
+        double v2 = ion.vx*ion.vx + ion.vy*ion.vy + ion.vz*ion.vz;
+        double energia_eV = (0.5 * masa_ion * v2) / carga_e;
+
+
+        if (z_new >= (L_sim / 100.0)) {
+            ion.estado = 3; // Verde: Escape
+        } else if (r_new >= lim_anodo && z_new <= (L_anodo / 100.0)) {
+            ion.estado = 4; // Gris: Choca con el Ánodo
+        
+
+
+        } else if (z_new >= 0.0 && z_new <= L_cat_m && r_new <= rc_m) {
             
 
-            if (k % 2 == 0) {
-
-                buf_Z(k) = 0.05;
-                buf_R(k) = std::sqrt(r_min * r_min + u * (r_max * r_max - r_min * r_min));
+            if (z_new >= L_cat_m - 0.0001) {
+                ion.estado = 2; // Morado: PUNTA
             } else {
-
-                buf_Z(k) = L + 0.1; 
-                buf_R(k) = u * r_c; 
+                ion.estado = 1; // Rojo: BARRIL
             }
-            
-            buf_Vr(k) = ((double)rand() / RAND_MAX) * 100.0;
-            buf_Vz(k) = 6500.0 + ((double)rand() / RAND_MAX) * 4000.0;
-            buf_Vth(k) = ((double)rand() / RAND_MAX) * 500.0;
-            buf_E(k) = 0;
+            ion.energia_impacto = energia_eV;
         }
     }
-
-    void calcular_paso(double dt,
-                       py::array_t<double> Ez_mat,
-                       py::array_t<double> Er_mat,
-                       py::array_t<double> Bz_mat,
-                       py::array_t<double> Br_mat,
-                       py::array_t<double> R_pared_arr, 
-                       double r_c, double r_a_max, double L) {
-
-        auto R = Rp.mutable_unchecked();
-        auto Z = Zp.mutable_unchecked();
-        auto Z_ant = Zp_anterior.mutable_unchecked();
-        auto Vr_ = Vr.mutable_unchecked();
-        auto Vz_ = Vz.mutable_unchecked();
-        auto Vth_ = Vtheta.mutable_unchecked();
-        auto E = Estado.mutable_unchecked();
-
-        auto Ez = Ez_mat.unchecked<2>();
-        auto Er = Er_mat.unchecked<2>();
-        auto Bz = Bz_mat.unchecked<2>();
-        auto Br = Br_mat.unchecked<2>();
-        auto R_pared = R_pared_arr.unchecked<1>(); 
-
-        const double q = 1.602e-19;
-        const double m = 6.63e-26; 
-        const double q_m = q / m;
-        const double mu_0 = 1.25663706e-6; 
-
-        double I_arc = -222.0; 
-        double L_sim = 6.5;
-        double r_min_malla = 0.001; 
-
-        for (int k = 0; k < N; k++) {
-            if (E(k) != 0) continue;
-
-            double z_previo = Z(k);
-            
-            double r_cm = R(k);
-            double z_cm = Z(k);
-
-            double r_m = r_cm / 100.0;
-            if (r_m < 1e-6) r_m = 1e-6; 
-
-            int j = (int)round((z_cm / L_sim) * (Nz - 1));
-            if (j < 0) j = 0;
-            if (j >= Nz) j = Nz - 1;
-
-            double ratio_r = (r_cm - r_min_malla) / (r_a_max - r_min_malla);
-            int i = (int)round(ratio_r * (Nr - 1));
-            if (i < 0) i = 0;
-            if (i >= Nr) i = Nr - 1;
-
-            double limite_anodo_actual = R_pared(j);
-
-            double Er_val = Er(i, j);
-            double Ez_val = Ez(i, j);
-            double Br_val = Br(i, j);
-            double Bz_val = Bz(i, j);
-
-            double Btheta = (mu_0 * I_arc) / (2.0 * M_PI * r_m);
-
-            double vr = Vr_(k);
-            double vz = Vz_(k);
-            double vth = Vth_(k);
-
-            double term_r = Er_val + vth * Bz_val - vz * Btheta;
-            double term_z = Ez_val + vr * Btheta - vth * Br_val;
-            double term_th = vz * Br_val - vr * Bz_val;
-
-
-            double ar = q_m * term_r + (vth * vth) / r_m;
-            double az = q_m * term_z;
-            double ath = q_m * term_th - (vr * vth) / r_m;
-
-            Vr_(k) += ar * dt;
-            Vz_(k) += az * dt;
-            Vth_(k) += ath * dt;
-
-            Z(k) += Vz_(k) * dt * 100.0;
-            R(k) += Vr_(k) * dt * 100.0;
-
-            if (R(k) < 0.0) {
-                R(k) = -R(k);
-                Vr_(k) = -Vr_(k);
-            }
-
-
-            
-            if (Z(k) >= L_sim) {
-                E(k) = 1;  // Escape
-                continue;
-            }
-            
-
-            if (Vz_(k) < 0 && Z(k) > L - 0.3 && R(k) <= r_c * 1.15) {
-                E(k) = -2;
-                Z(k) = L;
-                R(k) = std::min(R(k), r_c);
-                continue;
-            }
-            
-            if (z_previo > L && Z(k) <= L && R(k) <= r_c * 1.15) {
-                E(k) = -2;
-                Z(k) = L;
-                R(k) = std::min(R(k), r_c);
-                continue;
-            }
-            
-            // EROSIÓN LATERAL
-            if (Z(k) < L && R(k) <= r_c) {
-                E(k) = -1;
-                R(k) = r_c;
-                continue;
-            }
-            
-            // ÁNODO
-            if (R(k) >= limite_anodo_actual) { 
-                R(k) = limite_anodo_actual - 0.01;
-                if (Vr_(k) > 0) Vr_(k) *= -0.2; 
-            }
-            
-            Z_ant(k) = z_previo;
-        }
-    }
+}
 };
 
-
-//ESTA CLASE NECESITA MEJORES URGENTES PUES NO LOGRÉ MODELAR DE FORMA EFECTIVA LA FÍSICA EN LA PUNTA DEL CÁTODO :(
-class SimuladorIonesMPD {
-public:
-    int N, Nr, Nz;
-    py::array_t<double> Rp, Zp, Vr, Vz, Vtheta;
-    py::array_t<int> Estado;
-
-    SimuladorIonesMPD(int N_, int Nr_, int Nz_, double r_c, double r_a_base, double L)
-        : N(N_), Nr(Nr_), Nz(Nz_) {
-
-        Rp = py::array_t<double>(N);
-        Zp = py::array_t<double>(N);
-        Vr = py::array_t<double>(N);
-        Vz = py::array_t<double>(N);
-        Vtheta = py::array_t<double>(N);
-        Estado = py::array_t<int>(N);
-
-        auto buf_R = Rp.mutable_unchecked();
-        auto buf_Z = Zp.mutable_unchecked();
-        auto buf_Vr = Vr.mutable_unchecked();
-        auto buf_Vz = Vz.mutable_unchecked();
-        auto buf_Vth = Vtheta.mutable_unchecked();
-        auto buf_E = Estado.mutable_unchecked();
-
-        srand(42); 
-
-        double margen = 0.1; 
-        double r_min = r_c + margen;
-        double r_max = r_a_base - margen;
-
-        for (int k = 0; k < N; k++) {
-            double u_r = (double)rand() / RAND_MAX;
-            double u_z = (double)rand() / RAND_MAX;
-            
-            buf_R(k) = r_min + u_r * (r_max - r_min);
-            buf_Z(k) = 0.5 + u_z * (L - 1.0); 
-            
-            buf_Vr(k) = (((double)rand() / RAND_MAX) - 0.5) * 500.0; 
-            buf_Vz(k) = 2000.0 + ((double)rand() / RAND_MAX) * 2000.0; 
-            buf_Vth(k) = 500.0 + ((double)rand() / RAND_MAX) * 1000.0; 
-            
-            buf_E(k) = 0; 
-        }
-    }
-
-    void calcular_paso(double dt,
-                       py::array_t<double> Ez_mat,
-                       py::array_t<double> Er_mat,
-                       py::array_t<double> Bz_mat,
-                       py::array_t<double> Br_mat,
-                       py::array_t<double> R_pared_arr, 
-                       double r_c, double r_a_max, double L) {
-
-        auto R = Rp.mutable_unchecked();
-        auto Z = Zp.mutable_unchecked();
-        auto Vr_ = Vr.mutable_unchecked();
-        auto Vz_ = Vz.mutable_unchecked();
-        auto Vth_ = Vtheta.mutable_unchecked();
-        auto E = Estado.mutable_unchecked();
-
-        auto Ez = Ez_mat.unchecked<2>();
-        auto Er = Er_mat.unchecked<2>();
-        auto Bz = Bz_mat.unchecked<2>();
-        auto Br = Br_mat.unchecked<2>();
-        auto R_pared = R_pared_arr.unchecked<1>(); 
-
-        const double q = 1.602e-19;
-        const double m = 6.63e-26; 
-        const double q_m = q / m;
-        const double mu_0 = 1.25663706e-6; 
-
-        double I_arc = -222.0; 
-        double L_sim = 6.5;
-
-        for (int k = 0; k < N; k++) {
-            if (E(k) != 0) continue; 
-
-            double z_previo = Z(k);
-            double r_cm = R(k);
-            double z_cm = Z(k);
-            double r_m = r_cm / 100.0; 
-            if (r_m < 1e-6) r_m = 1e-6; 
-
-            int j = (int)round((z_cm / L_sim) * (Nz - 1));
-            j = std::clamp(j, 0, Nz - 1);
-            
-            double ratio_r = r_cm / r_a_max;
-            int i = (int)round(ratio_r * (Nr - 1));
-            i = std::clamp(i, 0, Nr - 1);
-
-            double Er_val = Er(i, j);
-            double Ez_val = Ez(i, j);
-            double Br_val = Br(i, j);
-            double Bz_val = Bz(i, j);
-
-            double Btheta = (mu_0 * I_arc) / (2.0 * M_PI * r_m);
-
-
-            if (z_cm >= L - 0.05 && z_cm < L + 0.15 && r_cm <= r_c * 1.5) {
-                double lambda_num = 0.05; 
-                double delta_phi = 15.0;  
-                
-
-                if (z_cm >= L) {
-                    double dist_z = z_cm - L;
-                    double Ez_sheath = -(delta_phi / lambda_num) * exp(-dist_z / lambda_num) * 100.0; 
-                    Ez_val += Ez_sheath; 
-                }
-
-
-                if (r_cm > r_c) {
-                    double dist_r = r_cm - r_c;
-
-                    double Er_sheath = -(delta_phi / lambda_num) * exp(-dist_r / lambda_num) * 100.0;
-                    Er_val += Er_sheath;
-                }
-            }
-
-
-            double vr = Vr_(k);
-            double vz = Vz_(k);
-            double vth = Vth_(k);
-
-
-            double F_r_Lorentz  = Er_val + vth * Bz_val - vz * Btheta;
-            double F_z_Lorentz  = Ez_val + vr * Btheta - vth * Br_val;
-            double F_th_Lorentz = vz * Br_val - vr * Bz_val;
-
-            double ar  = q_m * F_r_Lorentz  + (vth * vth) / r_m;
-            double az  = q_m * F_z_Lorentz;
-            double ath = q_m * F_th_Lorentz - (vr * vth) / r_m;
-
-
-            double altura_succion = 1.0; 
-            double rango_z = 0.2; 
-            
-
-            if (z_cm > L - rango_z && z_cm < L + rango_z && r_cm <= altura_succion) {
-
-                
-
-                az = (L - z_cm) * 2.0e12; 
-                
-
-                ar = -5.0e11; 
-                
-
-                ath = -Vth_(k) / dt; 
-            }
-
-            Vr_(k)  += ar * dt;
-            Vz_(k)  += az * dt;
-            Vth_(k) += ath * dt;
-
-            Z(k) += Vz_(k) * dt * 100.0; 
-            R(k) += Vr_(k) * dt * 100.0;
-
-            if (R(k) < 0.0) {
-                R(k) = -R(k);
-                Vr_(k) = -Vr_(k);
-            }
-            
-
-            if (Z(k) >= L_sim) {
-                E(k) = 1; 
-                continue;
-            }
-            
-
-            if (Z(k) >= L && Z(k) <= 6.5 && R(k) <= 0.6) {
-                E(k) = -2; 
-                Z(k) = L;  
-                
-
-                R(k) = ((double)rand() / RAND_MAX) * r_c;
-                continue;
-            }
-            
-
-            if (Z(k) < L && R(k) <= r_c) {
-                E(k) = -1; 
-                R(k) = r_c;
-                continue;
-            }
-            
-
-            double limite_anodo_actual = R_pared(j);
-            if (R(k) >= limite_anodo_actual) { 
-                E(k) = 2; 
-                R(k) = limite_anodo_actual;
-            }
-        }
-    }
-};
 
 
 PYBIND11_MODULE(motor_mpd_cpp, m) {
 
+    m.doc() = "Módulo C++ para el motor AF-MPD";
+
     // 1. Malla
     py::class_<Malla2D>(m, "Malla2D")
-        .def(py::init<int, int, double, double, double, bool>())
+
+        .def(py::init<int, int, double, double, double, double, bool>(),
+             py::arg("Nr"), py::arg("Nz"), py::arg("r_c"), py::arg("r_a"), 
+             py::arg("L_c"), py::arg("L_a"), py::arg("campana"))
         .def("obtener_Z", &Malla2D::obtener_Z)
-        .def("obtener_R", &Malla2D::obtener_R)
-        .def_readonly("Nr", &Malla2D::Nr)
-        .def_readonly("Nz", &Malla2D::Nz);
+        .def("obtener_R", &Malla2D::obtener_R);
 
     // 2. Plasma
     py::class_<PlasmaArgon>(m, "PlasmaArgon")
@@ -570,51 +402,33 @@ PYBIND11_MODULE(motor_mpd_cpp, m) {
         .def_readonly("temperatura", &PlasmaArgon::temperatura);
 
     // 3. Campo magnético
-    py::class_<CampoMagnetico>(m, "CampoMagnetico")
-        .def(py::init<int, int>())
-        .def("calcular_campo_aplicado", &CampoMagnetico::calcular_campo_aplicado)
-        .def_readonly("Br", &CampoMagnetico::Br)
-        .def_readonly("Bz", &CampoMagnetico::Bz);
+        py::class_<CampoMagnetico>(m, "CampoMagnetico")
+            .def(py::init<int, int>())
+
+            .def("calcular_campo_aplicado", &CampoMagnetico::calcular_campo_aplicado,
+                py::arg("B0"), py::arg("L_catodo"), py::arg("L_anodo"), 
+                py::arg("r_catodo"), py::arg("r_anodo"), py::arg("es_campana"))
+            .def_readonly("Br", &CampoMagnetico::Br)
+            .def_readonly("Bz", &CampoMagnetico::Bz);
 
     // 4. Fuerza de Lorentz (fluido, opcional mantener)
     py::class_<FuerzaLorentz>(m, "FuerzaLorentz")
-        .def(py::init<int, int>(), py::arg("Nr"), py::arg("Nz"))
-        .def("calcular_tensores", &FuerzaLorentz::calcular_tensores,
-             py::arg("I_arc"), py::arg("param_hall"), py::arg("L"),
-             py::arg("R_matriz"), py::arg("Br_matriz"), py::arg("Bz_matriz"))
-        .def_readonly("Jr", &FuerzaLorentz::Jr)
-        .def_readonly("Jtheta", &FuerzaLorentz::Jtheta)
-        .def_readonly("Fz", &FuerzaLorentz::Fz)
-        .def_readonly("Fr", &FuerzaLorentz::Fr);
+        .def(py::init<int, int>())
 
-// 5. Rastreador de iones (NO FUNCIONA, NO APORTA EN NADA)
-    py::class_<RastreadorIones>(m, "RastreadorIones")
-        .def(py::init<int, int, int, double, double>())
-        .def("calcular_paso", &RastreadorIones::calcular_paso,
-             py::arg("dt"),
-             py::arg("Ez_mat"),
-             py::arg("Er_mat"),
-             py::arg("Bz_mat"),
-             py::arg("Br_mat"),
-             py::arg("R_pared_arr"), 
-             py::arg("r_c"),
-             py::arg("r_a_max"),   
-             py::arg("L"))
-        .def_readonly("Rp", &RastreadorIones::Rp)
-        .def_readonly("Zp", &RastreadorIones::Zp)
-        .def_readonly("Vtheta", &RastreadorIones::Vtheta)
-        .def_readonly("Estado", &RastreadorIones::Estado)
-        .def_readwrite("Vz", &RastreadorIones::Vz);
+        .def("calcular_tensores", &FuerzaLorentz::calcular_tensores)
+        .def_readwrite("Jr", &FuerzaLorentz::Jr)
+        .def_readwrite("Jtheta", &FuerzaLorentz::Jtheta)
+        .def_readwrite("Fz", &FuerzaLorentz::Fz)
+        .def_readwrite("Fr", &FuerzaLorentz::Fr);
 
 
-// 6. Es el de la simulación xd, no logré terminar de ajustarlo :c
-    py::class_<SimuladorIonesMPD>(m, "SimuladorIonesMPD")
-        .def(py::init<int, int, int, double, double, double>())
-        .def("calcular_paso", &SimuladorIonesMPD::calcular_paso)
-        .def_readwrite("Rp", &SimuladorIonesMPD::Rp)
-        .def_readwrite("Zp", &SimuladorIonesMPD::Zp)
-        .def_readwrite("Vr", &SimuladorIonesMPD::Vr)
-        .def_readwrite("Vz", &SimuladorIonesMPD::Vz)
-        .def_readwrite("Vtheta", &SimuladorIonesMPD::Vtheta)
-        .def_readwrite("Estado", &SimuladorIonesMPD::Estado);
+// estoycansao. Simulador PIC de Iones
+
+    py::class_<SimuladorPIC>(m, "SimuladorPIC")
+        .def(py::init<int, double, double, double, double, double, int>())
+        .def("inicializar_particulas", &SimuladorPIC::inicializar_particulas)
+        .def("obtener_posiciones_rz", &SimuladorPIC::obtener_posiciones_rz)
+        .def("obtener_estados", &SimuladorPIC::obtener_estados)
+
+        .def("avanzar_paso_temporal_boris", &SimuladorPIC::avanzar_paso_temporal_boris);
 }
