@@ -58,10 +58,10 @@ El informe escrito del proyecto.
 
 ## Requisitos
 
-> Verificá las versiones y dependencias exactas en `ARCHIVOS/CMakeLists.txt` (cualquier `find_package(...)` que aparezca ahí es una dependencia que hay que tener instalada).
+> Verifica las versiones y dependencias exactas en `ARCHIVOS/CMakeLists.txt` (cualquier `find_package(...)` que aparezca ahí es una dependencia que hay que tener instalada).
 
 - **CMake** (3.15 o superior recomendado).
-- **Compilador de C++** con soporte para el estándar usado en el proyecto (C++17 es lo habitual; confirmá en el `CMakeLists.txt`).
+- **Compilador de C++** con soporte para el estándar usado en el proyecto (C++17 es lo habitual; confírmalo en el `CMakeLists.txt`).
   - *Windows:* Visual Studio 2019/2022 con el componente **"Desarrollo para escritorio con C++"**.
   - *Linux / macOS:* `g++` o `clang`.
 - **Python 3.x**, con sus cabeceras de desarrollo (`python3-dev` en Linux).
