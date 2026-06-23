@@ -1,3 +1,0 @@
-C:/Users/asus/Desktop/UNIVERSIDAD/PROYECTO FIS205/proyecto_af_mpd/build/CMakeFiles/motor_mpd_cpp.dir
-C:/Users/asus/Desktop/UNIVERSIDAD/PROYECTO FIS205/proyecto_af_mpd/build/CMakeFiles/ALL_BUILD.dir
-C:/Users/asus/Desktop/UNIVERSIDAD/PROYECTO FIS205/proyecto_af_mpd/build/CMakeFiles/ZERO_CHECK.dir
