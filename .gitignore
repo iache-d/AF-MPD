@@ -1,0 +1,22 @@
+# Artefactos de compilacion del modulo C++ preliminar
+preliminar-cpp/build/
+*.pyd
+*.so
+*.o
+*.obj
+
+# Python
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.venv/
+venv/
+
+# Salidas que generan los cuadernos al ejecutarse
+*.csv
+*.pkl
+
+# Sistema operativo
+Thumbs.db
+desktop.ini
+.DS_Store

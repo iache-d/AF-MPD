@@ -23,4 +23,4 @@ execute_process(
 find_package(pybind11 REQUIRED CONFIG PATHS "${pybind11_DIR}")
 
 
-pybind11_add_module(motor_mpd_cpp src/cpp/malla.cpp)
+pybind11_add_module(motor_mpd_cpp malla.cpp)

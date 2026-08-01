@@ -1,3 +1,44 @@
+// ============================================================================
+//  motor_mpd_cpp — etapa PRELIMINAR del integrador (descartada)
+// ============================================================================
+//
+//  Modulo de extension para Python que resolvia la dinamica ionica sobre una
+//  MALLA DISCRETIZADA, con campos efectivos impuestos por regiones. Fue
+//  descartado en favor del modelo de campos analiticos evaluados en la posicion
+//  de cada ion, que elimina el error de discretizacion espacial (ver README).
+//
+//  Se conserva por transparencia metodologica. El modelo vigente
+//  (notebooks/modelo-actual.ipynb) NO lo necesita: corre en Python puro.
+//
+//  ---------------------------------------------------------------------------
+//  COMPILACION
+//  ---------------------------------------------------------------------------
+//  Este archivo debe permanecer junto al CMakeLists.txt de esta misma carpeta.
+//  Requiere pybind11 instalado (pip install pybind11) y un compilador de C++17.
+//
+//    cd preliminar-cpp
+//    cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+//    cmake --build build --config Release
+//
+//  El modulo resultante queda en:
+//    - build/                 con Makefiles o MinGW
+//    - build/Release/         con el generador de Visual Studio
+//
+//  ---------------------------------------------------------------------------
+//  USO DESDE PYTHON
+//  ---------------------------------------------------------------------------
+//    import sys, os
+//    sys.path.append(os.path.abspath("../preliminar-cpp/build"))
+//    import motor_mpd_cpp
+//
+//  En Windows, si se compilo con MinGW, Python 3.8+ no resuelve las DLL del
+//  runtime a traves del PATH; hay que declarar el directorio antes de importar:
+//    os.add_dll_directory(r"C:\msys64\ucrt64\bin")
+//
+//  Clases expuestas: Malla2D, PlasmaArgon, CampoMagnetico, FuerzaLorentz,
+//  SimuladorPIC.
+// ============================================================================
+
 #include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>
 #include <cmath>

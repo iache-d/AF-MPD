@@ -52,6 +52,10 @@ de naturaleza **térmica y no mecánica**.
 
 ![Trayectorias de los iones de argón sobre la geometría del propulsor](./multimedia/lluvia_iones_analitico.gif)
 
+*Trazado de una **única semilla** del generador aleatorio, a modo ilustrativo. Los valores
+reportados en las tablas provienen del promedio sobre semillas independientes, no de esta
+corrida.*
+
 ### El blindaje HTS funciona, pero el *cusp* no
 
 | Configuración | Carga térmica sobre el cátodo | Escape |
@@ -122,6 +126,51 @@ sistemáticos de parámetros.
 
 El código de esa etapa se conserva en [`preliminar-cpp/`](./preliminar-cpp) por transparencia
 metodológica.
+
+### Cómo compilarla y usarla
+
+Solo hace falta si se quiere ejecutar las secciones 3 y 5 de
+[`notebooks/preliminar-fis205.ipynb`](./notebooks/preliminar-fis205.ipynb). **El modelo vigente
+no lo necesita.**
+
+`malla.cpp` debe permanecer junto a su `CMakeLists.txt`, dentro de `preliminar-cpp/`. Se
+requiere `pybind11` y un compilador de C++17:
+
+```bash
+pip install pybind11
+```
+
+```bash
+cd preliminar-cpp
+```
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+```
+
+```bash
+cmake --build build --config Release
+```
+
+El módulo resultante queda en `preliminar-cpp/build/` con Makefiles o MinGW, y en
+`preliminar-cpp/build/Release/` con el generador de Visual Studio. El cuaderno preliminar busca
+en ambas ubicaciones, de modo que no hay que ajustar nada.
+
+Desde Python se carga así:
+
+```python
+import sys, os
+sys.path.append(os.path.abspath("../preliminar-cpp/build"))
+import motor_mpd_cpp
+```
+
+Expone cinco clases: `Malla2D`, `PlasmaArgon`, `CampoMagnetico`, `FuerzaLorentz` y
+`SimuladorPIC`.
+
+> **En Windows compilando con MinGW:** Python 3.8 y posteriores no resuelven las DLL del
+> runtime a través del `PATH`. Si la importación falla con `ImportError: DLL load failed`, hay
+> que declarar el directorio del compilador antes de importar:
+> `os.add_dll_directory(r"C:\msys64\ucrt64\bin")`.
 
 ---
 
