@@ -1,0 +1,10 @@
+# Modelo actual (notebooks/modelo-actual.ipynb)
+numpy
+scipy
+matplotlib
+tqdm
+ipython
+notebook
+
+# Solo para compilar la etapa preliminar en C++ (preliminar-cpp/)
+# pybind11
